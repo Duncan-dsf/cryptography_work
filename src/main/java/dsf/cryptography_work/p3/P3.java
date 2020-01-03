@@ -22,9 +22,9 @@ public class P3 {
 
     static String key;
 
-    byte pad_1 = 0x36, pad_2 = 0x5C;
-    byte[] pad_1s = new byte[40], pad_2s = new byte[40];
-    {
+    static byte pad_1 = 0x36, pad_2 = 0x5C;
+    static byte[] pad_1s = new byte[40], pad_2s = new byte[40];
+    static {
         for (int i=0; i<40; i++) {
             pad_1s[i] = pad_1;
             pad_2s[i] = pad_2;
@@ -37,11 +37,12 @@ public class P3 {
 
         byte[] encrypt = send(new StringBuilder("I am 董少飞"));
 
+
     }
 
     public static byte[] send (StringBuilder message) throws Exception {
 
-        StringBuilder sb, segment;
+        StringBuilder sb, body;
 
         // 分段
         if (message.length() > bodyMaxSize/2) {
@@ -53,7 +54,7 @@ public class P3 {
             sb = new StringBuilder(message.toString());
             message.delete(0, message.length());
         }
-        segment = new StringBuilder(sb);
+        body = new StringBuilder(sb);
 
         // 消息认证码
         int bodyLength = sb.length();
@@ -65,7 +66,7 @@ public class P3 {
         String sha1Hex = DigestUtils.sha1Hex(sb.toString());
 
         // 加密
-        int length = (bodyLength + sha1Hex.length()) * 2;
+        int length = (bodyLength + sha1Hex.length()) * 2 + 1;
         byte[] padding = null;
         if (length / 8 * 8 != length) {
             int paddingLength = 8 - length & 8 - 1;
@@ -73,13 +74,29 @@ public class P3 {
             padding[paddingLength-1] = (byte) (paddingLength - 1);
         }
 
-        segment.append(sha1Hex)
+        body.append(sha1Hex)
                 .append(padding);
-        return Base64.decodeBase64(AESUtil.encrypt(key, segment.toString()));
+        byte[] bodyBytes = Base64.decodeBase64(AESUtil.encrypt(key, body.toString()));
+
+        // 添加ssl头
+        byte[] segment = new byte[4 + bodyBytes.length];
+        segment[0] = 0;
+        segment[1] = 3;
+        segment[2] = 0;
+        segment[3] = (byte) bodyBytes.length;
+        System.arraycopy(bodyBytes, 0, segment, 4, bodyBytes.length);
+        return segment;
     }
 
-    public String receive (byte[] encryption) throws Exception {
+    public static String receive (byte[] encryption) throws Exception {
 
+        // 解析协议，拿出body，并解密
+        byte[] bodyEncryption = new byte[encryption[3]];
+        System.arraycopy(encryption, 4, bodyEncryption, 0, encryption[3]);
+        byte[] message = AESUtil.decrypt(Base64.decodeBase64(key), bodyEncryption);
+
+        // 去掉填充
+        int paddingLength = message[message.length-1];
 
     }
 }
