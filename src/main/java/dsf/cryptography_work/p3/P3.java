@@ -18,7 +18,11 @@ public class P3 {
 
     static int bodyMaxSize = 1024 * 16;
 
-    static String MAC_write_secret = "董少飞";
+    static byte[] MAC_write_secret = "董少飞".getBytes();
+
+    static int macLength = 20;
+
+    static int headerLength = 4;
 
     static String key;
 
@@ -35,56 +39,50 @@ public class P3 {
 
         key = AESUtil.generateKey();
 
-        byte[] encrypt = send(new StringBuilder("I am 董少飞"));
-
-
+        byte[] encrypt = send("I am 董少飞");
+        String message = receive(encrypt);
+        System.out.println(message);
     }
 
-    public static byte[] send (StringBuilder message) throws Exception {
+    public static byte[] send (String total) throws Exception {
 
-        StringBuilder sb, body;
+        String message;
 
         // 分段
-        if (message.length() > bodyMaxSize/2) {
+        if (total.length() > bodyMaxSize/2) {
 
-            sb = new StringBuilder(message.substring(0, bodyMaxSize/2));
-            message.delete(0, bodyMaxSize/2);
+            message = total.substring(0, bodyMaxSize/2);
         } else {
 
-            sb = new StringBuilder(message.toString());
-            message.delete(0, message.length());
+            message = total;
         }
-        body = new StringBuilder(sb);
 
         // 消息认证码
-        int bodyLength = sb.length();
-        sb.append(MAC_write_secret)
-                .append(pad_2)
-                .append(Arrays.toString(DigestUtils.sha1(MAC_write_secret + String.valueOf(pad_1s) + 0)))
-                .append(0)
-                .append(bodyLength*2);
-        String sha1Hex = DigestUtils.sha1Hex(sb.toString());
+        byte[] messageBytes = message.getBytes();
+        byte[] mac = getMAC(messageBytes);
+
+        // 填充
+        int bodyLengthWithoutPadding = messageBytes.length + mac.length + 1;
+        byte[] padding = null;
+        int paddingLength = 8 - bodyLengthWithoutPadding & 7;
+        padding = new byte[paddingLength+1];
+        padding[paddingLength] = (byte) paddingLength;
+
+        byte[] body = new byte[bodyLengthWithoutPadding + paddingLength];
+        System.arraycopy(messageBytes, 0, body, 0, messageBytes.length);
+        System.arraycopy(mac, 0, body, messageBytes.length, mac.length);
+        System.arraycopy(padding, 0, body, bodyLengthWithoutPadding-1, padding.length);
 
         // 加密
-        int length = (bodyLength + sha1Hex.length()) * 2 + 1;
-        byte[] padding = null;
-        if (length / 8 * 8 != length) {
-            int paddingLength = 8 - length & 8 - 1;
-            padding = new byte[paddingLength];
-            padding[paddingLength-1] = (byte) (paddingLength - 1);
-        }
-
-        body.append(sha1Hex)
-                .append(padding);
-        byte[] bodyBytes = Base64.decodeBase64(AESUtil.encrypt(key, body.toString()));
+        byte[] bodyCipher = AESUtil.encrypt(Base64.decodeBase64(key), body);
 
         // 添加ssl头
-        byte[] segment = new byte[4 + bodyBytes.length];
+        byte[] segment = new byte[headerLength + bodyCipher.length];
         segment[0] = 0;
         segment[1] = 3;
         segment[2] = 0;
-        segment[3] = (byte) bodyBytes.length;
-        System.arraycopy(bodyBytes, 0, segment, 4, bodyBytes.length);
+        segment[3] = (byte) bodyCipher.length;
+        System.arraycopy(bodyCipher, 0, segment, 4, bodyCipher.length);
         return segment;
     }
 
@@ -95,8 +93,29 @@ public class P3 {
         System.arraycopy(encryption, 4, bodyEncryption, 0, encryption[3]);
         byte[] message = AESUtil.decrypt(Base64.decodeBase64(key), bodyEncryption);
 
-        // 去掉填充
+        // 去掉填充并解析
         int paddingLength = message[message.length-1];
+        byte[] messageBody = new byte[message.length - 1 - paddingLength - macLength],
+        macBytes = new byte[macLength];
+        System.arraycopy(message, 0, messageBody, 0, messageBody.length);
+        System.arraycopy(message, messageBody.length, macBytes, 0, macBytes.length);
 
+        // 校验mac
+        byte[] mac = getMAC(messageBody);
+        System.out.println(Arrays.equals(mac, macBytes));
+
+        return new String(messageBody);
+    }
+
+    public static byte[] getMAC(byte[] message) {
+
+        byte[] bytes = new byte[message.length + pad_2s.length + MAC_write_secret.length + 1 + 1];
+
+        System.arraycopy(MAC_write_secret, 0, bytes, 0, MAC_write_secret.length);
+        System.arraycopy(pad_2s, 0, bytes, MAC_write_secret.length, pad_1s.length);
+        bytes[MAC_write_secret.length + pad_2s.length] = 0;
+        bytes[MAC_write_secret.length + pad_2s.length + 1] = (byte) message.length;
+        System.arraycopy(message, 0, bytes, MAC_write_secret.length + pad_2s.length + 1 + 1, message.length);
+        return DigestUtils.sha1(bytes);
     }
 }
